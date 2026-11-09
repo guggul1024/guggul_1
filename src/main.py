@@ -189,10 +189,92 @@ _B_BY_NAME = {n: _recolor(_A_BY_NAME[n], c) for n, c in _B_COLORS.items()}
 B_ORDER = ["잠혈", "빌리루빈", "우로빌리노겐", "케톤체", "단백질",
            "아질산염", "포도당", "pH", "비중", "백혈구"]
 
+# 영동제약 Uriscan (10종): 항목 순서는 B형과 같고 색상표는 따로예요(첨부 비색표에서 추출).
+def _it(name, unit, digits, levels, **kw):
+    d = {"name": name, "unit": unit, "digits": digits, "neg_count": 1, "levels": levels}
+    d.update(kw)
+    return d
+
+
+ITEMS_Y = [
+    _it("잠혈", "RBC/μL", 0, [
+        ("음성", (251, 241, 47), None),
+        ("용혈 +10", (194, 216, 84), 10),
+        ("용혈 ++50", (118, 180, 105), 50),
+        ("용혈 +++250", (41, 121, 138), 250),
+        ("비용혈 +10", (204, 224, 147), 10),
+        ("비용혈 ++50", (113, 178, 159), 50),
+    ], chains=[[0, 1, 2, 3], [0, 4, 5]]),
+    _it("빌리루빈", "mg/dL", 1, [
+        ("음성", (253, 243, 212), None),
+        ("+ (0.5)", (247, 232, 205), 0.5),
+        ("++ (1.0)", (233, 208, 185), 1.0),
+        ("+++ (3.0)", (212, 170, 163), 3.0),
+    ]),
+    _it("우로빌리노겐", "mg/dL", 1, [
+        ("0.1 (±)", (254, 247, 223), 0.1),
+        ("+ (1)", (251, 241, 237), 1),
+        ("++ (4)", (247, 223, 217), 4),
+        ("+++ (8)", (239, 188, 183), 8),
+        ("++++ (12)", (231, 141, 154), 12),
+    ]),
+    _it("케톤체", "mg/dL", 0, [
+        ("음성", (252, 238, 221), None),
+        ("± (5)", (243, 220, 206), 5),
+        ("+ (10)", (236, 198, 196), 10),
+        ("++ (50)", (196, 135, 154), 50),
+        ("+++ (100)", (150, 78, 97), 100),
+    ]),
+    _it("단백질", "mg/dL", 0, [
+        ("음성", (242, 238, 88), None),
+        ("± (10)", (206, 226, 123), 10),
+        ("+ (30)", (176, 204, 133), 30),
+        ("++ (100)", (149, 193, 82), 100),
+        ("+++ (300)", (72, 165, 97), 300),
+        ("++++ (1000)", (67, 167, 181), 1000),
+    ]),
+    _it("아질산염", "", 0, [
+        ("음성", (255, 255, 255), None),
+        ("양성", (249, 169, 224), None),
+    ]),
+    _it("포도당", "mg/dL", 0, [
+        ("음성", (138, 204, 245), None),
+        ("± (100)", (167, 208, 138), 100),
+        ("+ (250)", (141, 177, 58), 250),
+        ("++ (500)", (106, 135, 18), 500),
+        ("+++ (1000)", (124, 87, 76), 1000),
+        ("++++ (2000)", (64, 43, 38), 2000),
+    ]),
+    _it("pH", "", 1, [
+        ("5", (240, 191, 114), 5),
+        ("6", (246, 214, 94), 6),
+        ("7", (195, 206, 67), 7),
+        ("8", (65, 153, 95), 8),
+        ("9", (47, 134, 155), 9),
+    ], numeric=True),
+    _it("비중", "", 3, [
+        ("1.000", (33, 101, 120), 1.0),
+        ("1.005", (59, 113, 100), 1.005),
+        ("1.010", (120, 144, 104), 1.01),
+        ("1.020", (177, 174, 57), 1.02),
+        ("1.025", (206, 186, 40), 1.025),
+        ("1.030", (233, 193, 24), 1.03),
+    ], numeric=True),
+    _it("백혈구", "WBC/μL", 0, [
+        ("음성", (251, 242, 221), None),
+        ("+ (25)", (247, 225, 201), 25),
+        ("++ (75)", (243, 223, 228), 75),
+        ("+++ (500)", (151, 86, 151), 500),
+    ]),
+]
+
 KITS = [
-    {"id": "A", "short": "A형", "name": "A형 (우로빌리노겐이 첫 칸)", "items": ITEMS_A},
-    {"id": "B", "short": "B형", "name": "B형 (잠혈이 첫 칸)",
-     "items": [_B_BY_NAME[n] for n in B_ORDER]},
+    {"id": "A", "group": "DFI (10종)", "short": "DFI A형",
+     "name": "A형 (우로빌리노겐이 첫 칸)", "items": ITEMS_A},
+    {"id": "B", "group": "DFI (10종)", "short": "DFI B형",
+     "name": "B형 (잠혈이 첫 칸)", "items": [_B_BY_NAME[n] for n in B_ORDER]},
+    {"id": "Y", "group": "영동제약 Uriscan (10종)", "short": "Uriscan",
+     "name": "Uriscan (잠혈이 첫 칸)", "items": ITEMS_Y},
 ]
 KIT_BY_ID = {k["id"]: k for k in KITS}
 ITEMS = ITEMS_A  # 이전 버전 호환용(기본값)
@@ -308,10 +390,10 @@ def judge_item(item, rgb):
     grade = chain.index(idx)
     grade_max = len(chain) - 1
     if item.get("numeric"):
-        judge = "수치"
+        judge = "단계"
     else:
         judge = "음성" if idx < item.get("neg_count", 1) else "양성"
-    value = estimate_value(item, rgb, idx)
+    value = None if item.get("numeric") else estimate_value(item, rgb, idx)
     return {
         "item": item["name"],
         "judge": judge,
@@ -473,12 +555,22 @@ def swatch(rgb):
     )
 
 
-JUDGE_COLORS = {"음성": "#2e7d32", "양성": "#c62828", "수치": "#546e7a"}
+JUDGE_COLORS = {"음성": "#2e7d32", "양성": "#c62828", "수치": "#546e7a", "단계": "#546e7a"}
 
 
-def judge_chip(judge):
+def is_stage(r):
+    """비중·pH처럼 음성/양성이 아니라 단계(n/N)로 보는 항목인지."""
+    return r.get("judge") in ("단계", "수치")
+
+
+def stage_text(r):
+    """'3/7' 처럼 몇 번째 칸인지 (표준 색상표 왼쪽부터 1단계)."""
+    return f'{r.get("grade", 0) + 1}/{r.get("grade_max", 0) + 1}'
+
+
+def judge_chip(judge, text=None):
     return ft.Container(
-        content=ft.Text(judge, color="white", size=13),
+        content=ft.Text(text or judge, color="white", size=13),
         bgcolor=JUDGE_COLORS.get(judge, "#546e7a"),
         border_radius=10,
         padding=ft.padding.symmetric(horizontal=10, vertical=3),
@@ -529,17 +621,29 @@ def item_detail(r, kit_id="A"):
             ],
             alignment=ft.MainAxisAlignment.SPACE_EVENLY,
         ),
-        ft.Row([ft.Text("판정", size=13, width=60), judge_chip(judge),
-                ft.Text(r["label"], size=13)], spacing=8),
-        ft.Row(
+        (ft.Row([ft.Text("판정", size=13, width=60),
+                 judge_chip("단계", f"{stage_text(r)} 단계")], spacing=8)
+         if is_stage(r) else
+         ft.Row([ft.Text("판정", size=13, width=60), judge_chip(judge),
+                 ft.Text(r["label"], size=13)], spacing=8)),
+        (ft.Row(
+            [
+                ft.Text("단계", size=13, width=60),
+                ft.Text(stage_text(r), size=15, weight=ft.FontWeight.BOLD),
+                ft.Text("(색상표 왼쪽 첫 칸이 1단계)", size=10),
+            ],
+            spacing=8,
+        ) if is_stage(r) else ft.Row(
             [
                 ft.Text("점수", size=13, width=60),
                 ft.Text(f"{grade} / {gmax}", size=15, weight=ft.FontWeight.BOLD),
                 ft.Text("(0은 가장 연한 칸, 클수록 진한 칸)", size=10),
             ],
             spacing=8,
-        ),
-        ft.ProgressBar(value=(grade / gmax) if gmax else 0, height=8),
+        )),
+        ft.ProgressBar(
+            value=((grade + 1) / (gmax + 1)) if is_stage(r) else ((grade / gmax) if gmax else 0),
+            height=8),
     ]
     if r.get("value") is not None:
         unit = f' {r["unit"]}' if r.get("unit") else ""
@@ -602,6 +706,34 @@ def item_detail(r, kit_id="A"):
     )
 
 
+def app_header():
+    """시험지 모양 로고(10칸 색 패드) + 앱 이름."""
+    pads = [
+        ft.Container(width=15, height=15, border_radius=3,
+                     bgcolor=rgb_to_hex(it["levels"][min(2, len(it["levels"]) - 1)][1]))
+        for it in ITEMS_A
+    ]
+    strip = ft.Container(
+        content=ft.Row(pads, spacing=3, tight=True),
+        padding=ft.padding.symmetric(horizontal=8, vertical=6),
+        bgcolor="#f4f1ea",
+        border_radius=8,
+    )
+    return ft.Container(
+        content=ft.Column(
+            [
+                ft.Text("SB-kit", size=28, weight=ft.FontWeight.BOLD, color="#ffffff"),
+                ft.Text("소변 시험지 판독 기록", size=12, color="#b0c4cc"),
+                strip,
+            ],
+            spacing=6,
+        ),
+        bgcolor="#12303a",
+        border_radius=12,
+        padding=14,
+    )
+
+
 def chart_view(kit_id):
     """선택한 검사지 종류의 판독지(표준 색상표 전체)를 보여줘요."""
     kit = KIT_BY_ID.get(kit_id, KITS[0])
@@ -657,8 +789,11 @@ def result_rows(results, kit_id="A"):
     group = []  # (detail, arrow) 목록: 하나를 펼치면 나머지는 접어요
     for r in results:
         judge = r.get("judge", "")
-        summary = f'{r["label"]} · 단계 {r.get("grade", 0)}/{r.get("grade_max", 0)}'
-        if r.get("value") is not None:
+        if is_stage(r):
+            summary = f'단계 {stage_text(r)}'
+        else:
+            summary = f'{r["label"]} · 단계 {r.get("grade", 0)}/{r.get("grade_max", 0)}'
+        if r.get("value") is not None and not is_stage(r):
             unit = f' {r["unit"]}' if r.get("unit") else ""
             shown = f'{r["value"]:.{r.get("digits", 0)}f}'
             summary += f' · 추정 {shown}{unit}'
@@ -697,7 +832,7 @@ def result_rows(results, kit_id="A"):
                         spacing=0,
                         expand=True,
                     ),
-                    judge_chip(judge),
+                    judge_chip(judge, f"{stage_text(r)} 단계" if is_stage(r) else None),
                     arrow,
                 ],
                 spacing=8,
@@ -712,7 +847,7 @@ def result_rows(results, kit_id="A"):
 
 
 def main(page: ft.Page):
-    page.title = "키트 기록"
+    page.title = "SB-kit"
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 20
 
@@ -782,6 +917,11 @@ def main(page: ft.Page):
             on_click=lambda e, kid=_k["id"]: select_kit(kid),
         )
     style_kit_buttons()
+    kit_panel = ft.Column(spacing=4)
+    for _g in dict.fromkeys(k["group"] for k in KITS):
+        kit_panel.controls.append(ft.Text(_g, size=13, weight=ft.FontWeight.BOLD))
+        kit_panel.controls.append(
+            ft.Row([kit_buttons[k["id"]] for k in KITS if k["group"] == _g], spacing=8))
     editor_box = ft.Column(visible=False, spacing=8)
 
     def delete_record(index):
@@ -1130,9 +1270,9 @@ def main(page: ft.Page):
     page.overlay.append(picker)
 
     page.add(
-        ft.Text("키트 기록", size=24, weight=ft.FontWeight.BOLD),
+        app_header(),
         ft.Text("검사지 종류를 고르세요 (색상표의 항목 순서를 보고 맞는 것을 선택)", size=12),
-        ft.Row(list(kit_buttons.values()), spacing=8),
+        kit_panel,
         ft.Text(
             "시험지를 흰 배경에 놓고, 사진 한가운데 크게 찍어주세요.\n"
             "선택한 종류의 첫 칸이 위쪽(가로면 왼쪽)에 오게 하세요."
