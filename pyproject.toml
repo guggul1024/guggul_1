@@ -1,0 +1,19 @@
+[project]
+name = "kit-app"
+version = "1.0.0"
+description = "키트 기록"
+dependencies = [
+  "flet==0.28.3",
+  "pillow",
+]
+
+[tool.flet]
+org = "com.example"
+product = "키트 기록"
+company = "personal"
+copyright = "personal use"
+build_number = 1
+
+[tool.flet.app]
+path = "src"
+module = "main"
