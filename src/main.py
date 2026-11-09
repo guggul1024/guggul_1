@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import math
 import os
 from datetime import datetime
 
@@ -12,19 +13,19 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 #    각 항목의 levels 첫 번째가 음성(기본) 색이에요.
 #    실제 키트를 찍어 보고 어긋나면 RGB 값을 고쳐 쓰면 돼요.
 # ─────────────────────────────────────────────
-ITEMS = [
+ITEMS_A = [
     {
         "name": "우로빌리노겐",
         "unit": "mg/dL",
         "digits": 1,
-        "neg_count": 2,  # 앞에서부터 이 개수까지는 음성(정상)
+        "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("0.1 (정상)", (254, 255, 224), 0.1),
-            ("1 (16)", (254, 247, 243), 1),
-            ("2 (33)", (252, 223, 218), 2),
-            ("4 (66)", (249, 188, 184), 4),
-            ("8 (131)", (246, 143, 158), 8),
+            ("0.1 (정상)", (252, 245, 215), 0.1),
+            ("1 (16)", (253, 237, 233), 1),
+            ("2 (33)", (248, 215, 209), 2),
+            ("4 (66)", (243, 182, 176), 4),
+            ("8 (131)", (235, 140, 153), 8),
         ],
     },
     {
@@ -34,11 +35,11 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (129, 215, 255), None),
-            ("±100 (5.5)", (165, 217, 150), 100),
-            ("+250 (14)", (171, 168, 65), 250),
-            ("++500 (28)", (166, 135, 82), 500),
-            ("+++1000 (55)", (136, 69, 44), 1000),
+            ("음성", (126, 207, 247), None),
+            ("±100 (5.5)", (159, 208, 145), 100),
+            ("+250 (14)", (165, 162, 68), 250),
+            ("++500 (28)", (163, 131, 79), 500),
+            ("+++1000 (55)", (132, 70, 46), 1000),
         ],
     },
     {
@@ -48,10 +49,10 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (254, 249, 213), None),
-            ("+", (252, 233, 202), None),
-            ("++", (238, 208, 185), None),
-            ("+++", (212, 166, 164), None),
+            ("음성", (252, 239, 207), None),
+            ("+", (244, 223, 194), None),
+            ("++", (227, 201, 178), None),
+            ("+++", (204, 161, 159), None),
         ],
     },
     {
@@ -61,11 +62,11 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (253, 246, 221), None),
-            ("±5 (0.5)", (250, 222, 208), 5),
-            ("+15 (1.5)", (243, 197, 197), 15),
-            ("++40 (3.9)", (200, 137, 161), 40),
-            ("+++100 (10)", (155, 85, 107), 100),
+            ("음성", (251, 235, 212), None),
+            ("±5 (0.5)", (238, 212, 197), 5),
+            ("+15 (1.5)", (232, 189, 189), 15),
+            ("++40 (3.9)", (193, 133, 156), 40),
+            ("+++100 (10)", (150, 85, 105), 100),
         ],
     },
     {
@@ -75,13 +76,13 @@ ITEMS = [
         "numeric": True,  # 음성/양성이 아니라 수치로 보는 항목
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("1.000", (33, 102, 115), 1.0),
-            ("1.005", (57, 110, 99), 1.005),
-            ("1.010", (109, 137, 102), 1.01),
-            ("1.015", (140, 157, 72), 1.015),
-            ("1.020", (171, 168, 65), 1.02),
-            ("1.025", (205, 179, 55), 1.025),
-            ("1.030", (236, 189, 53), 1.03),
+            ("1.000", (32, 99, 112), 1.0),
+            ("1.005", (54, 107, 95), 1.005),
+            ("1.010", (107, 133, 100), 1.01),
+            ("1.015", (135, 153, 73), 1.015),
+            ("1.020", (165, 162, 68), 1.02),
+            ("1.025", (197, 173, 57), 1.025),
+            ("1.030", (227, 183, 52), 1.03),
         ],
     },
     {
@@ -92,12 +93,12 @@ ITEMS = [
         "chains": [[0, 1, 2, 3], [0, 4, 5]],  # 단계가 이어지는 순서(인덱스)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (252, 251, 67), None),
-            ("용혈 +10", (195, 224, 101), 10),
-            ("용혈 ++50", (121, 189, 118), 50),
-            ("용혈 +++250", (44, 121, 136), 250),
-            ("비용혈 +10", (237, 239, 164), 10),
-            ("비용혈 ++50", (205, 223, 149), 50),
+            ("음성", (244, 240, 67), None),
+            ("용혈 +10", (188, 215, 99), 10),
+            ("용혈 ++50", (117, 183, 115), 50),
+            ("용혈 +++250", (43, 118, 131), 250),
+            ("비용혈 +10", (240, 233, 163), 10),
+            ("비용혈 ++50", (203, 214, 144), 50),
         ],
     },
     {
@@ -107,12 +108,12 @@ ITEMS = [
         "numeric": True,  # 음성/양성이 아니라 수치로 보는 항목
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("5", (248, 191, 120), 5),
-            ("6", (250, 217, 104), 6),
-            ("6.5", (228, 203, 107), 6.5),
-            ("7", (195, 209, 87), 7),
-            ("8", (77, 160, 104), 8),
-            ("9", (53, 136, 152), 9),
+            ("5", (244, 183, 117), 5),
+            ("6", (249, 209, 103), 6),
+            ("6.5", (220, 197, 106), 6.5),
+            ("7", (188, 201, 84), 7),
+            ("8", (76, 154, 103), 8),
+            ("9", (51, 132, 149), 9),
         ],
     },
     {
@@ -122,12 +123,12 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (248, 247, 105), None),
-            ("trace", (233, 238, 137), None),
-            ("+30 (0.3)", (218, 233, 136), 30),
-            ("++100 (1.0)", (181, 213, 136), 100),
-            ("+++300 (3.0)", (164, 208, 156), 300),
-            ("++++1000 (10)", (127, 184, 144), 1000),
+            ("음성", (237, 237, 102), None),
+            ("trace", (225, 229, 134), None),
+            ("+30 (0.3)", (212, 224, 129), 30),
+            ("++100 (1.0)", (174, 204, 130), 100),
+            ("+++300 (3.0)", (155, 198, 151), 300),
+            ("++++1000 (10)", (123, 178, 139), 1000),
         ],
     },
     {
@@ -137,9 +138,9 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (254, 255, 224), None),
-            ("trace", (253, 231, 237), None),
-            ("양성", (213, 103, 174), None),
+            ("음성", (252, 245, 215), None),
+            ("trace", (249, 223, 229), None),
+            ("양성", (206, 101, 169), None),
         ],
     },
     {
@@ -149,13 +150,53 @@ ITEMS = [
         "neg_count": 1,  # 앞에서부터 이 개수까지는 음성(정상)
         # (이름, 기준 색 RGB, 수치) - 수치가 None이면 차트에 숫자가 없는 칸
         "levels": [
-            ("음성", (254, 248, 222), None),
-            ("+25", (252, 226, 198), 25),
-            ("++75", (250, 224, 231), 75),
-            ("+++500", (190, 149, 193), 500),
+            ("음성", (252, 238, 214), None),
+            ("+25", (243, 217, 192), 25),
+            ("++75", (240, 215, 223), 75),
+            ("+++500", (183, 145, 186), 500),
         ],
     },
 ]
+
+# ─────────────────────────────────────────────
+# 검사지 종류: 같은 회사 제품이지만 항목 순서와 색이 조금 달라요.
+#   A형: 우로빌리노겐 → 포도당 → 빌리루빈 → 케톤체 → 비중 → 잠혈 → pH → 단백질 → 아질산염 → 백혈구
+#   B형: 잠혈 → 빌리루빈 → 우로빌리노겐 → 케톤체 → 단백질 → 아질산염 → 포도당 → pH → 비중 → 백혈구
+#   B형 색은 B형 색상표 이미지에서 추출한 값이에요.
+# ─────────────────────────────────────────────
+_B_COLORS = {
+    "잠혈": [(246, 240, 35), (195, 217, 83), (117, 181, 105), (44, 121, 138), (244, 238, 168), (204, 214, 147)],
+    "빌리루빈": [(252, 243, 212), (246, 231, 202), (231, 208, 182), (211, 170, 165)],
+    "우로빌리노겐": [(253, 248, 221), (251, 241, 237), (248, 222, 218), (242, 188, 182), (232, 140, 152)],
+    "케톤체": [(253, 240, 220), (242, 220, 207), (234, 197, 195), (196, 135, 154), (153, 78, 98)],
+    "단백질": [(241, 239, 89), (230, 233, 125), (219, 226, 123), (181, 207, 124), (165, 202, 146), (125, 178, 132)],
+    "아질산염": [(253, 248, 221), (249, 229, 234), (207, 95, 161)],
+    "포도당": [(140, 206, 245), (167, 210, 141), (177, 175, 51), (165, 134, 66), (141, 68, 39)],
+    "pH": [(242, 190, 114), (247, 215, 93), (224, 206, 93), (194, 205, 65), (66, 153, 93), (49, 135, 154)],
+    "비중": [(33, 101, 120), (54, 113, 100), (119, 143, 105), (146, 163, 61), (177, 175, 51), (207, 186, 34), (232, 193, 20)],
+    "백혈구": [(252, 242, 221), (245, 226, 201), (243, 223, 227), (191, 151, 189)],
+}
+
+
+def _recolor(item, colors):
+    it = dict(item)
+    it["levels"] = [(lv[0], tuple(c), lv[2]) for lv, c in zip(item["levels"], colors)]
+    return it
+
+
+_A_BY_NAME = {it["name"]: it for it in ITEMS_A}
+_B_BY_NAME = {n: _recolor(_A_BY_NAME[n], c) for n, c in _B_COLORS.items()}
+B_ORDER = ["잠혈", "빌리루빈", "우로빌리노겐", "케톤체", "단백질",
+           "아질산염", "포도당", "pH", "비중", "백혈구"]
+
+KITS = [
+    {"id": "A", "short": "A형", "name": "A형 (우로빌리노겐이 첫 칸)", "items": ITEMS_A},
+    {"id": "B", "short": "B형", "name": "B형 (잠혈이 첫 칸)",
+     "items": [_B_BY_NAME[n] for n in B_ORDER]},
+]
+KIT_BY_ID = {k["id"]: k for k in KITS}
+ITEMS = ITEMS_A  # 이전 버전 호환용(기본값)
+
 
 # ─────────────────────────────────────────────
 # ② 사진에서 시험지 칸 위치 설정 (필요하면 조절하세요)
@@ -315,7 +356,7 @@ def find_strip(img):
     return (int(x0 * k), int(y0 * k), int(x1 * k), int(y1 * k))
 
 
-def analyze_strip(img, flip=False):
+def analyze_strip(img, flip=False, items=None):
     """시험지 사진에서 10개 칸의 색을 읽고 항목별 결과를 반환.
 
     사진이 가로든 세로든 상관없이, 시험지가 놓인 방향(긴 쪽)을 먼저 찾고
@@ -323,6 +364,7 @@ def analyze_strip(img, flip=False):
     세로로 놓였으면 위→아래, 가로로 놓였으면 왼쪽→오른쪽 순서예요.
     """
     w, h = img.size
+    items = items or ITEMS
     box = find_strip(img)
     if box is None:
         box = (0, 0, w, h)
@@ -332,13 +374,14 @@ def analyze_strip(img, flip=False):
     length, width = (bh, bw) if vertical else (bw, bh)
     start = y0 if vertical else x0
     cross_center = (x0 + x1) / 2 if vertical else (y0 + y1) / 2
-    n = len(ITEMS)
+    n = len(items)
     spacing = (PAD_END - PAD_START) * length / (n - 1)
     along = max(2, int(spacing * ALONG_RATIO))
     across = max(2, int(width * ACROSS_RATIO / 2))
+    along = across = min(along, across)  # 정사각형
 
     boxes = []
-    for i, item in enumerate(ITEMS):
+    for i, item in enumerate(items):
         off = PAD_START * length + spacing * i
         pos = start + (length - off if flip else off)
         if vertical:
@@ -346,7 +389,7 @@ def analyze_strip(img, flip=False):
         else:
             b = (pos - along, cross_center - across, pos + along, cross_center + across)
         boxes.append(clamp_box(b, w, h))
-    return results_from_boxes(img, boxes), boxes
+    return results_from_boxes(img, boxes, items), boxes
 
 
 def clamp_box(b, w, h):
@@ -357,11 +400,26 @@ def clamp_box(b, w, h):
     return (x0, y0, x1, y1)
 
 
-def results_from_boxes(img, boxes):
-    """각 네모 안의 평균 색을 읽어서 항목별로 판정해요."""
+def white_gains(img, target=245):
+    """사진에서 가장 밝은 부분(흰 시험지/종이)을 흰색으로 보고, 밝기·색 보정 배율(R,G,B)을 구해요."""
+    small = img.copy()
+    small.thumbnail((300, 300))
+    px = list(small.convert("RGB").getdata())
+    px.sort(key=lambda p: p[0] * 299 + p[1] * 587 + p[2] * 114)
+    top = px[-max(1, len(px) // 25):]  # 가장 밝은 4%
+    gains = []
+    for c in range(3):
+        w = sum(p[c] for p in top) / len(top)
+        gains.append(min(1.8, max(0.9, target / max(w, 1))))
+    return tuple(gains)
+
+
+def results_from_boxes(img, boxes, items=None, gain=(1.0, 1.0, 1.0)):
+    """각 네모 안의 평균 색을 읽어서 항목별로 판정해요. gain은 밝기 보정 배율(R,G,B)."""
     results = []
-    for item, b in zip(ITEMS, boxes):
+    for item, b in zip(items or ITEMS, boxes):
         avg = img.crop(tuple(b)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+        avg = tuple(min(255, int(round(v * g))) for v, g in zip(avg[:3], gain))
         results.append(judge_item(item, avg))
     return results
 
@@ -369,9 +427,13 @@ def results_from_boxes(img, boxes):
 DISPLAY_MAX = 380  # 위치 조정 화면에서 사진의 긴 쪽 길이(픽셀)
 
 
-def make_clean_b64(img, scale):
-    """위치 조정 화면에 깔 사진(네모 없이)을 base64로 만들어요."""
+def make_clean_b64(img, scale, gain=(1.0, 1.0, 1.0)):
+    """위치 조정 화면에 깔 사진(네모 없이)을 base64로 만들어요. 밝기 보정도 반영."""
     small = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))))
+    if any(abs(g - 1.0) > 0.005 for g in gain):
+        chans = [ch.point([min(255, int(round(v * g))) for v in range(256)])
+                 for ch, g in zip(small.convert("RGB").split(), gain)]
+        small = Image.merge("RGB", chans)
     buf = io.BytesIO()
     small.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("ascii")
@@ -428,34 +490,224 @@ def overall_judge(results):
     return "양성" if any(r.get("judge") == "양성" for r in results) else "음성"
 
 
-def result_rows(results):
-    """항목별 결과 한 줄씩. (측정 색 · 기준 색 · 항목 · 판정 · 단계 · 수치)"""
-    rows = []
+def find_item(name, kit_id="A"):
+    for it in KIT_BY_ID.get(kit_id, KITS[0])["items"]:
+        if it["name"] == name:
+            return it
+    return None
+
+
+def big_swatch(rgb, caption):
+    """큰 색 칸 + 설명 글자."""
+    return ft.Column(
+        [
+            ft.Container(
+                width=70, height=50, bgcolor=rgb_to_hex(rgb), border_radius=8,
+                border=ft.border.all(1, "#999999"),
+            ),
+            ft.Text(caption, size=11),
+            ft.Text(f"RGB {rgb[0]}, {rgb[1]}, {rgb[2]}", size=10),
+        ],
+        spacing=3,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+
+def item_detail(r, kit_id="A"):
+    """한 항목을 눌렀을 때 펼쳐지는 상세: 표준색, 내 결과지 색, 점수, 판정."""
+    item = find_item(r["item"], kit_id)
+    grade, gmax = r.get("grade", 0), r.get("grade_max", 0)
+    judge = r.get("judge", "")
+    diff = color_distance(r["rgb"], r["ref"])
+
+    lines = [
+        ft.Row(
+            [
+                big_swatch(r["rgb"], "내 결과지 색"),
+                ft.Text("vs", size=13),
+                big_swatch(r["ref"], "표준색 (가장 가까운 칸)"),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_EVENLY,
+        ),
+        ft.Row([ft.Text("판정", size=13, width=60), judge_chip(judge),
+                ft.Text(r["label"], size=13)], spacing=8),
+        ft.Row(
+            [
+                ft.Text("점수", size=13, width=60),
+                ft.Text(f"{grade} / {gmax}", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text("(0은 가장 연한 칸, 클수록 진한 칸)", size=10),
+            ],
+            spacing=8,
+        ),
+        ft.ProgressBar(value=(grade / gmax) if gmax else 0, height=8),
+    ]
+    if r.get("value") is not None:
+        unit = f' {r["unit"]}' if r.get("unit") else ""
+        shown = f'{r["value"]:.{r.get("digits", 0)}f}'
+        lines.append(ft.Row([ft.Text("추정 수치", size=13, width=60),
+                             ft.Text(f"{shown}{unit}", size=15, weight=ft.FontWeight.BOLD)],
+                            spacing=8))
+    lines.append(
+        ft.Text(f"색 차이 {diff:.1f} (작을수록 표준색과 비슷해요)", size=11)
+    )
+
+    if item:
+        chain = get_chain(item, next(
+            (i for i, lv in enumerate(item["levels"]) if lv[0] == r["label"]), 0))
+        neg_n = 0 if item.get("numeric") else item.get("neg_count", 1)
+        chips, neg_chips = [], []
+        for i, (label, ref, _) in enumerate(item["levels"]):
+            mine = label == r["label"]
+            (neg_chips if i < neg_n else chips).append(
+                ft.Column(
+                    [
+                        ft.Container(
+                            width=40, height=28, bgcolor=rgb_to_hex(ref), border_radius=5,
+                            border=ft.border.all(3 if mine else 1,
+                                                 "#1e88e5" if mine else "#aaaaaa"),
+                        ),
+                        ft.Text(label, size=9, width=52, text_align=ft.TextAlign.CENTER),
+                    ],
+                    spacing=2,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                )
+            )
+        lines.append(ft.Text("판독표 (파란 테두리 칸이 내 결과)", size=11))
+
+        def group(title, color, cs):
+            return ft.Container(
+                content=ft.Column(
+                    [ft.Text(title, size=11, color=color, weight=ft.FontWeight.BOLD),
+                     ft.Row(cs, wrap=True, spacing=6, run_spacing=6)],
+                    spacing=4,
+                ),
+                padding=6,
+                border_radius=6,
+                border=ft.border.all(2, color),
+            )
+
+        groups = []
+        if neg_chips:
+            groups.append(group("음성", "#1e88e5", neg_chips))
+        if chips:
+            groups.append(group("양성" if neg_chips else "단계", "#e64a19", chips))
+        lines.append(ft.Row(groups, wrap=True, spacing=8, run_spacing=8,
+                            vertical_alignment=ft.CrossAxisAlignment.START))
+
+    return ft.Container(
+        content=ft.Column(lines, spacing=8),
+        padding=ft.padding.symmetric(horizontal=10, vertical=10),
+        border_radius=10,
+        border=ft.border.all(1, "#555555"),
+    )
+
+
+def chart_view(kit_id):
+    """선택한 검사지 종류의 판독지(표준 색상표 전체)를 보여줘요."""
+    kit = KIT_BY_ID.get(kit_id, KITS[0])
+    rows = [ft.Text(f'{kit["name"]} 판독지', size=14, weight=ft.FontWeight.BOLD)]
+
+    def chip(label, ref):
+        return ft.Column(
+            [
+                ft.Container(width=40, height=28, bgcolor=rgb_to_hex(ref), border_radius=5,
+                             border=ft.border.all(1, "#aaaaaa")),
+                ft.Text(label, size=9, width=52, text_align=ft.TextAlign.CENTER),
+            ],
+            spacing=2,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+    def group(title, color, cs):
+        return ft.Container(
+            content=ft.Column(
+                [ft.Text(title, size=11, color=color, weight=ft.FontWeight.BOLD),
+                 ft.Row(cs, wrap=True, spacing=6, run_spacing=6)],
+                spacing=4,
+            ),
+            padding=6,
+            border_radius=6,
+            border=ft.border.all(2, color),
+        )
+
+    for item in kit["items"]:
+        neg_n = 0 if item.get("numeric") else item.get("neg_count", 1)
+        neg = [chip(lv[0], lv[1]) for lv in item["levels"][:neg_n]]
+        pos = [chip(lv[0], lv[1]) for lv in item["levels"][neg_n:]]
+        groups = []
+        if neg:
+            groups.append(group("음성", "#1e88e5", neg))
+        if pos:
+            groups.append(group("양성" if neg else "단계", "#e64a19", pos))
+        unit = f' ({item["unit"]})' if item.get("unit") else ""
+        rows.append(ft.Text(item["name"] + unit, size=13, weight=ft.FontWeight.BOLD))
+        rows.append(ft.Row(groups, wrap=True, spacing=8, run_spacing=8,
+                           vertical_alignment=ft.CrossAxisAlignment.START))
+    return ft.Container(
+        content=ft.Column(rows, spacing=8),
+        padding=10,
+        border_radius=10,
+        border=ft.border.all(1, "#555555"),
+    )
+
+
+def result_rows(results, kit_id="A"):
+    """항목별 결과 한 줄씩. 줄을 누르면 표준색/내 색 비교 상세가 펼쳐져요."""
+    rows = [ft.Text("항목을 누르면 표준색과 내 결과지 색 비교가 나와요", size=11)]
+    group = []  # (detail, arrow) 목록: 하나를 펼치면 나머지는 접어요
     for r in results:
         judge = r.get("judge", "")
-        detail = f'{r["label"]} · 단계 {r.get("grade", 0)}/{r.get("grade_max", 0)}'
+        summary = f'{r["label"]} · 단계 {r.get("grade", 0)}/{r.get("grade_max", 0)}'
         if r.get("value") is not None:
             unit = f' {r["unit"]}' if r.get("unit") else ""
             shown = f'{r["value"]:.{r.get("digits", 0)}f}'
-            detail += f' · 추정 {shown}{unit}'
-        rows.append(
-            ft.Row(
+            summary += f' · 추정 {shown}{unit}'
+        detail = item_detail(r, kit_id)
+        detail.visible = False
+        arrow = ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=20)
+
+        group.append((detail, arrow))
+
+        def toggle(e, detail=detail, arrow=arrow):
+            opening = not detail.visible
+            for d, a in group:  # 먼저 모두 접기
+                d.visible = False
+                a.name = ft.Icons.KEYBOARD_ARROW_DOWN
+            if opening:
+                detail.visible = True
+                arrow.name = ft.Icons.KEYBOARD_ARROW_UP
+            pg = getattr(e, "page", None)
+            if pg is not None:
+                pg.update()
+            else:
+                for d, a in group:
+                    d.update()
+                    a.update()
+
+        header = ft.Container(
+            content=ft.Row(
                 [
                     swatch(r["rgb"]),
                     swatch(r["ref"]),
                     ft.Column(
                         [
                             ft.Text(r["item"], size=15, weight=ft.FontWeight.BOLD),
-                            ft.Text(detail, size=12),
+                            ft.Text(summary, size=12),
                         ],
                         spacing=0,
                         expand=True,
                     ),
                     judge_chip(judge),
+                    arrow,
                 ],
                 spacing=8,
-            )
+            ),
+            on_click=toggle,
+            ink=True,
+            border_radius=8,
+            padding=ft.padding.symmetric(vertical=4, horizontal=2),
         )
+        rows.append(ft.Column([header, detail], spacing=4))
     return rows
 
 
@@ -476,11 +728,60 @@ def main(page: ft.Page):
            "done": 0, "total": 0}
     editor_title = ft.Text("", size=15, weight=ft.FontWeight.BOLD)
     stack_holder = ft.Column()
-    size_slider = ft.Slider(min=0.3, max=3, value=1, divisions=27, label="{value}배")
-    space_slider = ft.Slider(min=0.5, max=2, value=1, divisions=30, label="{value}배")
-    legend = ft.Text(
-        "  ".join(f"{i + 1} {it['name']}" for i, it in enumerate(ITEMS)), size=11
-    )
+    # 1% / 1° 단위로 세밀하게 (양옆 -/+ 버튼으로 한 칸씩도 조절)
+    size_slider = ft.Slider(min=30, max=300, value=100, divisions=270, label="{value}%", expand=True)
+    space_slider = ft.Slider(min=50, max=200, value=100, divisions=150, label="{value}%", expand=True)
+    auto_light = ft.Switch(label="자동 밝기 보정 (사진이 어둡게 찍혔을 때)", value=True)
+    bright_slider = ft.Slider(min=70, max=200, value=100, divisions=130, label="{value}%", expand=True)
+    angle_slider = ft.Slider(min=-45, max=45, value=0, divisions=90, label="{value}°", expand=True)
+    legend = ft.Text("", size=11)
+    sel = {"kit": "A"}  # 지금 선택된 검사지 종류
+    chart_holder = ft.Column(visible=False)
+
+    def refresh_chart():
+        chart_holder.controls = [chart_view(sel["kit"])] if chart_holder.visible else []
+
+    def toggle_chart(e):
+        chart_holder.visible = not chart_holder.visible
+        refresh_chart()
+        page.update()
+    kit_buttons = {}
+
+    def kit_items(kit_id):
+        return KIT_BY_ID[kit_id]["items"]
+
+    def legend_text(kit_id):
+        return "  ".join(f"{i + 1} {it['name']}" for i, it in enumerate(kit_items(kit_id)))
+
+    def style_kit_buttons():
+        for kid, b in kit_buttons.items():
+            on = kid == sel["kit"]
+            b.bgcolor = "#1e88e5" if on else "#37474f"
+            b.color = "#ffffff"
+
+    def select_kit(kit_id):
+        sel["kit"] = kit_id
+        style_kit_buttons()
+        refresh_chart()
+        # 조정 화면이 열려 있으면 그 사진(과 대기 중인 사진)에도 적용
+        for it in queue:
+            it["kit"] = kit_id
+        if cur["item"] is not None and editor_box.visible:
+            cur["item"]["kit"] = kit_id
+            legend.value = legend_text(kit_id)
+            editor_title.value = (
+                f"위치 조정 ({cur['done'] + 1}/{cur['total']}) · {cur['item']['taken']}"
+                f" · {KIT_BY_ID[kit_id]['short']}"
+            )
+        page.update()
+
+    for _k in KITS:
+        kit_buttons[_k["id"]] = ft.ElevatedButton(
+            _k["name"],
+            expand=True,
+            on_click=lambda e, kid=_k["id"]: select_kit(kid),
+        )
+    style_kit_buttons()
     editor_box = ft.Column(visible=False, spacing=8)
 
     def delete_record(index):
@@ -488,12 +789,14 @@ def main(page: ft.Page):
         save_records(records)
         refresh_history()
 
+    open_views = []  # 날짜별 (펼침 영역, 화살표)
+
     def make_record_view(i, r):
         """날짜 줄을 누르면 항목별 결과가 펼쳐지고 접히는 한 칸."""
         details = ft.Column(
             [
                 ft.Text("색 칸: 왼쪽 측정 색, 오른쪽 기준 색", size=11),
-                *result_rows(r["results"]),
+                *result_rows(r["results"], r.get("kit", "A")),
                 ft.TextButton(
                     "이 기록 삭제",
                     icon=ft.Icons.DELETE,
@@ -505,13 +808,16 @@ def main(page: ft.Page):
         )
         arrow = ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN)
 
+        open_views.append((details, arrow))
+
         def toggle(e):
-            details.visible = not details.visible
-            arrow.name = (
-                ft.Icons.KEYBOARD_ARROW_UP
-                if details.visible
-                else ft.Icons.KEYBOARD_ARROW_DOWN
-            )
+            opening = not details.visible
+            for d, a in open_views:  # 다른 날짜는 모두 접기
+                d.visible = False
+                a.name = ft.Icons.KEYBOARD_ARROW_DOWN
+            if opening:
+                details.visible = True
+                arrow.name = ft.Icons.KEYBOARD_ARROW_UP
             page.update()
 
         header = ft.Container(
@@ -519,6 +825,7 @@ def main(page: ft.Page):
                 [
                     ft.Text(r["date"], size=16),
                     judge_chip(overall_judge(r["results"])),
+                    ft.Text(KIT_BY_ID.get(r.get("kit", "A"), KITS[0])["short"], size=12),
                     ft.Container(expand=True),
                     arrow,
                 ],
@@ -533,6 +840,7 @@ def main(page: ft.Page):
 
     def refresh_history():
         history.controls.clear()
+        open_views.clear()
         for i in reversed(range(len(records))):
             history.controls.append(make_record_view(i, records[i]))
         page.update()
@@ -549,20 +857,22 @@ def main(page: ft.Page):
         dw, dh = max(1, int(img.width * scale)), max(1, int(img.height * scale))
         cur["centers"] = []
         cur.update(item=item, scale=scale, dw=dw, dh=dh, boxes=[], gds=[], base=[])
-        size_slider.value = 1
-        space_slider.value = 1
+        size_slider.value = 100
+        space_slider.value = 100
+        angle_slider.value = 0
+        bright_slider.value = 100
+
+        def on_pan(e):
+            dx, dy = get_delta(e)
+            bs = cur["boxes"]
+            # 묶음이 사진 밖으로 나가지 않게 이동량을 제한
+            dx = clamp(dx, -min(b[0] for b in bs), cur["dw"] - max(b[0] + b[2] for b in bs))
+            dy = clamp(dy, -min(b[1] for b in bs), cur["dh"] - max(b[1] + b[3] for b in bs))
+            cur["anchor"][0] += dx
+            cur["anchor"][1] += dy
+            apply_layout()
 
         def make_gd(i, l, t, w, h):
-            def on_pan(e):
-                dx, dy = get_delta(e)
-                bs = cur["boxes"]
-                # 묶음이 사진 밖으로 나가지 않게 이동량을 제한
-                dx = clamp(dx, -min(b[0] for b in bs), cur["dw"] - max(b[0] + b[2] for b in bs))
-                dy = clamp(dy, -min(b[1] for b in bs), cur["dh"] - max(b[1] + b[3] for b in bs))
-                cur["anchor"][0] += dx
-                cur["anchor"][1] += dy
-                apply_layout()
-
             return ft.GestureDetector(
                 content=ft.Container(
                     width=w,
@@ -590,41 +900,125 @@ def main(page: ft.Page):
         cur["anchor"] = [sum(c[0] for c in cs) / len(cs), sum(c[1] for c in cs) / len(cs)]
         cur["offs"] = [(c[0] - cur["anchor"][0], c[1] - cur["anchor"][1]) for c in cs]
 
+        handle = ft.GestureDetector(
+            content=ft.Container(
+                width=HANDLE, height=HANDLE, bgcolor="#1e88e5", border_radius=HANDLE / 2,
+                border=ft.border.all(2, "#ffffff"),
+                content=ft.Icon(ft.Icons.OPEN_WITH, color="#ffffff", size=26),
+            ),
+            on_pan_update=on_pan,
+            drag_interval=15,
+            left=0,
+            top=0,
+        )
+        cur["handle"] = handle
+        place_handle()
+
         stack = ft.Stack(
-            [ft.Image(src_base64=make_clean_b64(img, scale), width=dw, height=dh),
-             *cur["gds"]],
+            [ft.Image(src_base64=make_clean_b64(img, scale, gain_for(item)), width=dw, height=dh),
+             *cur["gds"], handle],
             width=dw,
             height=dh,
         )
         stack_holder.controls = [stack]
+        kid = item.get("kit", sel["kit"])
+        legend.value = legend_text(kid)
         editor_title.value = (
             f"위치 조정 ({cur['done'] + 1}/{cur['total']}) · {item['taken']}"
+            f" · {KIT_BY_ID[kid]['short']}"
         )
         editor_box.visible = True
         page.update()
 
+    HANDLE = 46  # 잡는 버튼 크기
+
+    def place_handle():
+        """파란 잡는 버튼을 네모 묶음 옆(공간 없으면 반대편)에 놓아요."""
+        bs, h = cur["boxes"], cur.get("handle")
+        if not bs or h is None:
+            return
+        minl = min(b[0] for b in bs)
+        maxr = max(b[0] + b[2] for b in bs)
+        mint = min(b[1] for b in bs)
+        maxb = max(b[1] + b[3] for b in bs)
+        gap = 8
+        if (maxb - mint) >= (maxr - minl):  # 세로로 긴 묶음 → 옆에
+            x = maxr + gap
+            if x + HANDLE > cur["dw"]:
+                x = minl - gap - HANDLE
+            y = (mint + maxb) / 2 - HANDLE / 2
+        else:  # 가로로 긴 묶음 → 아래(없으면 위)에
+            y = maxb + gap
+            if y + HANDLE > cur["dh"]:
+                y = mint - gap - HANDLE
+            x = (minl + maxr) / 2 - HANDLE / 2
+        h.left = clamp(x, 0, cur["dw"] - HANDLE)
+        h.top = clamp(y, 0, cur["dh"] - HANDLE)
+
     def apply_layout():
         """기준점 + 간격 배율 + 크기 배율로 모든 네모의 위치와 크기를 다시 계산."""
-        sf, sp = size_slider.value, space_slider.value
+        sf, sp = size_slider.value / 100, space_slider.value / 100
         ax, ay = cur["anchor"]
+        rad = math.radians(angle_slider.value)
+        ca, sa = math.cos(rad), math.sin(rad)
         for j, bx in enumerate(cur["boxes"]):
             bw, bh = cur["base"][j]
             ox, oy = cur["offs"][j]
+            rx, ry = ox * ca - oy * sa, ox * sa + oy * ca  # 묶음 전체를 기준점 둘레로 회전
             nw = clamp(bw * sf, 8, cur["dw"])
             nh = clamp(bh * sf, 8, cur["dh"])
-            bx[0] = clamp(ax + ox * sp - nw / 2, 0, cur["dw"] - nw)
-            bx[1] = clamp(ay + oy * sp - nh / 2, 0, cur["dh"] - nh)
+            bx[0] = clamp(ax + rx * sp - nw / 2, 0, cur["dw"] - nw)
+            bx[1] = clamp(ay + ry * sp - nh / 2, 0, cur["dh"] - nh)
             bx[2], bx[3] = nw, nh
             g = cur["gds"][j]
             g.content.width, g.content.height = nw, nh
             g.left, g.top = bx[0], bx[1]
+        place_handle()
         stack_holder.controls[0].update()
 
     def on_layout_change(e):
         apply_layout()
 
+    def gain_for(item):
+        """자동 보정 배율(사진마다 한 번만 계산) × 수동 밝기."""
+        if auto_light.value:
+            if item.get("gains") is None:
+                item["gains"] = white_gains(item["img"])
+            base = item["gains"]
+        else:
+            base = (1.0, 1.0, 1.0)
+        b = bright_slider.value / 100
+        return tuple(g * b for g in base)
+
+    def refresh_preview(e=None):
+        item = cur.get("item")
+        if item is None or not stack_holder.controls:
+            return
+        stack_holder.controls[0].controls[0].src_base64 = make_clean_b64(
+            item["img"], cur["scale"], gain_for(item))
+        stack_holder.controls[0].update()
+
     size_slider.on_change = on_layout_change
     space_slider.on_change = on_layout_change
+    angle_slider.on_change = on_layout_change
+    auto_light.on_change = refresh_preview
+    bright_slider.on_change = refresh_preview
+
+    def slider_row(sl, step):
+        """슬라이더 양옆에 -/+ 버튼을 붙여 한 칸씩 미세 조절."""
+        def nudge(d):
+            sl.value = clamp(round(sl.value + d * step), sl.min, sl.max)
+            if cur.get("item") is not None and stack_holder.controls:
+                (refresh_preview if sl is bright_slider else lambda: apply_layout())()
+            page.update()
+        return ft.Row(
+            [
+                ft.IconButton(ft.Icons.REMOVE, on_click=lambda e: nudge(-1)),
+                sl,
+                ft.IconButton(ft.Icons.ADD, on_click=lambda e: nudge(1)),
+            ],
+            spacing=0,
+        )
 
     def show_next():
         if not queue:
@@ -644,8 +1038,9 @@ def main(page: ft.Page):
                       item["img"].width, item["img"].height)
             for l, t, w, h in cur["boxes"]
         ]
-        results = results_from_boxes(item["img"], boxes)
-        records.append({"date": item["taken"], "results": results})
+        kid = item.get("kit", sel["kit"])
+        results = results_from_boxes(item["img"], boxes, kit_items(kid), gain_for(item))
+        records.append({"date": item["taken"], "kit": kid, "results": results})
         records.sort(key=lambda r: r["date"])
         save_records(records)
         result_title.value = (
@@ -664,7 +1059,9 @@ def main(page: ft.Page):
         item = cur["item"]
         if item is None:
             return
-        item["boxes"] = analyze_strip(item["img"], flip.value)[1]
+        item["boxes"] = analyze_strip(
+            item["img"], flip.value, kit_items(item.get("kit", sel["kit"]))
+        )[1]
         build_editor(item)
 
     def on_picked(e: ft.FilePickerResultEvent):
@@ -675,12 +1072,12 @@ def main(page: ft.Page):
         for f in e.files:
             try:
                 img = load_image(f.path)
-                _, boxes = analyze_strip(img, flip.value)
+                _, boxes = analyze_strip(img, flip.value, kit_items(sel["kit"]))
             except Exception:
                 failed += 1
                 continue
             taken = get_photo_datetime(f.path).strftime("%Y-%m-%d %H:%M")
-            added.append({"img": img, "boxes": boxes, "taken": taken})
+            added.append({"img": img, "boxes": boxes, "taken": taken, "kit": sel["kit"]})
         if failed:
             result_title.value = f"{failed}장은 읽지 못했어요."
         if not added:
@@ -695,6 +1092,7 @@ def main(page: ft.Page):
             cur["total"] += len(added)
             editor_title.value = (
                 f"위치 조정 ({cur['done'] + 1}/{cur['total']}) · {cur['item']['taken']}"
+                f" · {KIT_BY_ID[cur['item'].get('kit', sel['kit'])]['short']}"
             )
             page.update()
 
@@ -702,14 +1100,19 @@ def main(page: ft.Page):
         ft.Divider(),
         editor_title,
         ft.Text(
-            "빨간 네모 아무거나 손가락(마우스)으로 끌면 10개가 한꺼번에 움직여요. "
+            "파란 ✥ 버튼(또는 빨간 네모)을 끌면 10개가 한꺼번에 움직여요. "
             "각 칸 위에 맞춰주세요. 번호는 아래 항목 순서예요.",
             size=12,
         ),
         ft.Text("네모 크기 (칸 안의 색만 읽히도록 조절하세요)", size=12),
-        size_slider,
+        slider_row(size_slider, 1),
         ft.Text("네모 간격 (칸 사이가 넓으면 키우고, 좁으면 줄이세요)", size=12),
-        space_slider,
+        slider_row(space_slider, 1),
+        ft.Text("각도 (시험지가 기울어 찍혔으면 맞춰 돌리세요)", size=12),
+        slider_row(angle_slider, 1),
+        ft.Text("사진 밝기 (실제보다 어둡게 읽히면 올리세요. 자동 보정 위에 더해져요)", size=12),
+        auto_light,
+        slider_row(bright_slider, 1),
         stack_holder,
         legend,
         ft.Row(
@@ -728,9 +1131,18 @@ def main(page: ft.Page):
 
     page.add(
         ft.Text("키트 기록", size=24, weight=ft.FontWeight.BOLD),
+        ft.Text("검사지 종류를 고르세요 (색상표의 항목 순서를 보고 맞는 것을 선택)", size=12),
+        ft.Row(list(kit_buttons.values()), spacing=8),
         ft.Text(
             "시험지를 흰 배경에 놓고, 사진 한가운데 크게 찍어주세요.\n"
-            "첫 칸(우로빌리노겐)이 위쪽(가로면 왼쪽)에 오게 하세요."
+            "선택한 종류의 첫 칸이 위쪽(가로면 왼쪽)에 오게 하세요."
+        ),
+        ft.Text(
+            "💡 사진에 흰색이 보여야 밝기 보정이 잘돼요. 시험지의 흰 부분이나 "
+            "흰 종이가 함께 찍히게 하세요. 어두운 배경에 시험지만 크게 찍으면 "
+            "보정 기준이 흐려질 수 있어요.",
+            size=12,
+            color="#ffb300",
         ),
         flip,
         ft.ElevatedButton(
@@ -741,6 +1153,8 @@ def main(page: ft.Page):
                 allow_multiple=True,
             ),
         ),
+        ft.OutlinedButton("판독지 보기 / 닫기", icon=ft.Icons.PALETTE, on_click=toggle_chart),
+        chart_holder,
         editor_box,
         result_title,
         ft.Divider(),
