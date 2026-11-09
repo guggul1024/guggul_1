@@ -333,8 +333,16 @@ ITEMS = ITEMS_A  # 이전 버전 호환용(기본값)
 # ② 사진에서 시험지 칸 위치 설정 (필요하면 조절하세요)
 #    시험지의 긴 방향 기준으로, 첫 칸~마지막 칸이 놓인 구간(0~1)
 # ─────────────────────────────────────────────
-PAD_START = 0.09   # 첫 번째 칸(우로빌리노겐) 중심 위치 (시험지 길이 기준 0~1)
-PAD_END = 0.72     # 마지막 칸(백혈구) 중심 위치 (손잡이가 긴 시험지 기준)
+# 시험지 실제 크기(mm). 자로 재서 고치면 가이드 틀과 자동 위치가 그대로 맞춰져요.
+STRIP_MM = {
+    "length": 120.0,  # 시험지 전체 길이 (끝에서 끝까지)
+    "width": 5.5,     # 시험지 폭
+    "first": 11.0,    # 시험지 끝(첫 칸 쪽)에서 첫 번째 칸 중심까지
+    "pitch": 7.6,     # 칸 중심에서 다음 칸 중심까지 간격
+    "pad": 5.0,       # 색 칸 하나의 한 변 길이
+}
+PAD_START = STRIP_MM["first"] / STRIP_MM["length"]   # 첫 칸 중심 위치 (길이 기준 0~1)
+PAD_END = (STRIP_MM["first"] + 9 * STRIP_MM["pitch"]) / STRIP_MM["length"]  # 마지막(10번째) 칸
 ALONG_RATIO = 0.30  # 칸 간격 대비 측정 영역 길이
 ACROSS_RATIO = 0.50  # 시험지 폭 대비 측정 영역 폭(가운데 기준)
 
@@ -1226,6 +1234,20 @@ def main(page: ft.Page):
             return
         build_editor(queue.pop(0))
 
+    def finish_record(item, boxes):
+        """네모 위치(사진 좌표)로 색을 읽어 판정하고 기록으로 저장해요."""
+        kid = item.get("kit", sel["kit"])
+        results = results_from_boxes(item["img"], boxes, kit_items(kid), gain_for(item))
+        records.append({"date": item["taken"], "kit": kid, "results": results})
+        records.sort(key=lambda r: r["date"])
+        save_records(records)
+        result_title.value = (
+            f"{item['taken']} 기록 저장 · 전체 {overall_judge(results)} "
+            "(아래 기록에서 날짜를 누르면 항목별 결과가 나와요)"
+        )
+        refresh_history()
+        return results
+
     def save_current(e):
         item = cur["item"]
         if item is None:
@@ -1236,17 +1258,8 @@ def main(page: ft.Page):
                       item["img"].width, item["img"].height)
             for l, t, w, h in cur["boxes"]
         ]
-        kid = item.get("kit", sel["kit"])
-        results = results_from_boxes(item["img"], boxes, kit_items(kid), gain_for(item))
-        records.append({"date": item["taken"], "kit": kid, "results": results})
-        records.sort(key=lambda r: r["date"])
-        save_records(records)
-        result_title.value = (
-            f"{item['taken']} 기록 저장 · 전체 {overall_judge(results)} "
-            "(아래 기록에서 날짜를 누르면 항목별 결과가 나와요)"
-        )
+        finish_record(item, boxes)
         cur["done"] += 1
-        refresh_history()
         show_next()
 
     def skip_current(e):
@@ -1283,9 +1296,13 @@ def main(page: ft.Page):
 
     def add_images(pairs):
         added = []
-        for img, taken in pairs:
+        for entry in pairs:
+            img, taken = entry[0], entry[1]
             try:
-                _, boxes = analyze_strip(img, flip.value, kit_items(sel["kit"]))
+                if len(entry) > 2 and entry[2]:
+                    boxes = entry[2]  # 카메라 가이드 위치 그대로
+                else:
+                    _, boxes = analyze_strip(img, flip.value, kit_items(sel["kit"]))
             except Exception:
                 continue
             added.append({"img": img, "boxes": boxes, "taken": taken, "kit": sel["kit"]})
@@ -1400,16 +1417,69 @@ def main(page: ft.Page):
             cam_status.value = f"촬영 오류: {ex}"
             page.update()
             return
+        if img.width > img.height:  # 가로로 저장됐으면 세로로 돌려요
+            img = img.rotate(-90, expand=True)
+        taken = datetime.now().strftime("%Y-%m-%d %H:%M")
+        boxes = guide_boxes_for(img)
         cam_box.visible = False
-        add_images([(img, datetime.now().strftime("%Y-%m-%d %H:%M"))])
+        if auto_read.value:
+            item = {"img": img, "kit": sel["kit"], "taken": taken}
+            res = finish_record(item, boxes)
+            result_title.value += f" (카메라 바로 판독: {overall_judge(res)})"
+            page.update()
+            return
+        add_images([(img, taken, boxes)])
 
     async def close_cam(e):
         cam_box.visible = False
         page.update()
 
+    # 카메라 화면 위에 올리는 가이드: 시험지를 맞출 흰 선 + 10칸 빨간 네모
+    cam_w = int(min((page.width or 400) - 40, 380))
+    cam_h = int(cam_w * 4 / 3)
+    STRIP_TOP, STRIP_LEN = 0.06, 0.88  # 화면 높이 대비 시험지 위치/길이
+    n_pad = 10
+    mm = cam_h * STRIP_LEN / STRIP_MM["length"]   # 화면에서 1mm가 차지하는 픽셀
+    SIDE_PX = STRIP_MM["pad"] * mm                # 실제 칸 크기와 같은 한 변
+    STRIP_W_PX = STRIP_MM["width"] * mm           # 실제 시험지 폭
+    guide_y = [STRIP_TOP + (STRIP_MM["first"] + i * STRIP_MM["pitch"]) * mm / cam_h
+               for i in range(n_pad)]              # 각 칸 중심 (화면 높이 대비)
+
+    def guide_boxes_for(img):
+        """가이드의 네모 위치를 찍힌 사진 좌표로 바꿔요. 읽는 영역은 칸 안쪽 70%."""
+        w, h = img.size
+        half = SIDE_PX * 0.7 / cam_w * w / 2
+        return [clamp_box((w / 2 - half, y * h - half, w / 2 + half, y * h + half), w, h)
+                for y in guide_y]
+
+    auto_read = ft.Switch(label="찍은 뒤 위치 확인 없이 바로 판독·저장", value=False)
+
+    def make_guide():
+        items_ = [
+            ft.Container(width=cam_w, height=cam_h, content=camera),
+            ft.Container(
+                left=cam_w / 2 - STRIP_W_PX / 2, top=cam_h * STRIP_TOP,
+                width=STRIP_W_PX, height=cam_h * STRIP_LEN,
+                border=border_all(1, "#ccffffff"), border_radius=3,
+            ),
+        ]
+        for i, y in enumerate(guide_y):
+            items_.append(ft.Container(
+                left=cam_w / 2 - SIDE_PX / 2, top=y * cam_h - SIDE_PX / 2,
+                width=SIDE_PX, height=SIDE_PX, border=border_all(1, "#ff0000"),
+                content=ft.Text(str(i + 1), size=8, color="#ff0000"),
+            ))
+        return ft.Container(
+            content=ft.Stack(items_, width=cam_w, height=cam_h),
+            width=cam_w, height=cam_h, bgcolor="#000000", border_radius=8,
+        )
+
     if camera is not None:
         cam_box.controls = [
-            ft.Container(height=420, bgcolor="#000000", border_radius=8, content=camera),
+            ft.Text("흰 선 안에 시험지를 세로로 놓고, 첫 칸이 빨간 1번에 오게 맞춘 뒤 촬영하세요.",
+                    size=12),
+            make_guide(),
+            auto_read,
             cam_status,
             ft.Row(
                 [
