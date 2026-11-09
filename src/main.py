@@ -337,8 +337,8 @@ ITEMS = ITEMS_A  # 이전 버전 호환용(기본값)
 STRIP_MM = {
     "length": 120.0,  # 시험지 전체 길이 (끝에서 끝까지)
     "width": 5.5,     # 시험지 폭
-    "first": 11.0,    # 시험지 끝(첫 칸 쪽)에서 첫 번째 칸 중심까지
-    "pitch": 7.6,     # 칸 중심에서 다음 칸 중심까지 간격
+    "first": 4.0,     # 시험지 끝(첫 칸 쪽)에서 첫 번째 칸 중심까지 (실물 사진에서 잰 비율)
+    "pitch": 8.4,     # 칸 중심에서 다음 칸 중심까지 간격
     "pad": 5.0,       # 색 칸 하나의 한 변 길이
 }
 PAD_START = STRIP_MM["first"] / STRIP_MM["length"]   # 첫 칸 중심 위치 (길이 기준 0~1)
@@ -495,15 +495,157 @@ def find_strip(img):
     return (int(x0 * k), int(y0 * k), int(x1 * k), int(y1 * k))
 
 
+def _find_vertical_strip(gray, w, h):
+    """세로로 선 가늘고 긴 시험지의 두 가장자리 줄(x1, x2)과 세로 범위를 찾아요."""
+    thr = 3
+    cols = [0] * w
+    edge = [None] * h  # 각 줄에서 가장자리가 있는 x들
+    for y in range(h):
+        row = gray[y * w:(y + 1) * w]
+        xs = set()
+        for x in range(1, w - 1):
+            if abs(row[x + 1] - row[x - 1]) > thr:
+                cols[x] += 1
+                xs.add(x)
+        edge[y] = xs
+    cut = 0.27 * h  # 길이의 27% 이상 이어지는 가장자리 줄만
+    groups, cur = [], []
+    for x in range(w):
+        if cols[x] >= cut:
+            cur.append(x)
+        elif cur and x - cur[-1] > 1:
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    cands = []
+    for g in groups:
+        tot = sum(cols[x] for x in g)
+        cands.append((sum(x * cols[x] for x in g) / tot, max(cols[x] for x in g)))
+    best = None
+    for ca, sa in cands:
+        for cb, sb in cands:
+            if 3 <= cb - ca <= 0.35 * w:
+                sc = min(sa, sb)
+                if best is None or sc > best[0] + 1e-9:
+                    best = (sc, ca, cb)
+    if best is None:
+        return None
+    sc, ca, cb = best
+    a, b = int(round(ca)), int(round(cb))
+    has = [any(abs(x - a) <= 1 for x in edge[y]) and any(abs(x - b) <= 1 for x in edge[y])
+           for y in range(h)]
+    run, cur_start, last, best_run = None, None, None, (0, 0, 0)
+    for y in range(h):
+        if has[y]:
+            if cur_start is None or y - last > 8:
+                cur_start = y
+            last = y
+            if last - cur_start > best_run[0]:
+                best_run = (last - cur_start, cur_start, last)
+    if best_run[0] < 0.3 * h:
+        return None
+    return {"x1": ca, "x2": cb, "y0": best_run[1], "y1": best_run[2] + 1,
+            "score": best_run[0] / h}
+
+
+def find_strip_info(img):
+    """얇고 긴 시험지를 찾아 방향·시작점·폭을 알려줘요. 못 찾으면 None.
+
+    시험지의 양쪽 가장자리(평행한 긴 선 두 개)를 찾아서 폭과 시작점을 구해요.
+    사진 끝에서 시험지가 잘려도 폭을 기준으로 칸 위치를 계산할 수 있어요.
+    """
+    small = img.copy()
+    small.thumbnail((260, 260))
+    small = small.convert("L").filter(ImageFilter.GaussianBlur(1))
+    sw, sh = small.size
+    gray = list(small.getdata())
+    v = _find_vertical_strip(gray, sw, sh)
+    t = small.transpose(Image.Transpose.TRANSPOSE)
+    hz = _find_vertical_strip(list(t.getdata()), sh, sw)
+    if v is None and hz is None:
+        return None
+    k = img.width / sw
+    if hz is None or (v is not None and v["score"] >= hz["score"]):
+        return {"vertical": True, "start": v["y0"] * k, "end": v["y1"] * k,
+                "cross": (v["x1"] + v["x2"]) / 2 * k + k / 2, "width": (v["x2"] - v["x1"]) * k}
+    return {"vertical": False, "start": hz["y0"] * k, "end": hz["y1"] * k,
+            "cross": (hz["x1"] + hz["x2"]) / 2 * k + k / 2, "width": (hz["x2"] - hz["x1"]) * k}
+
+
+def locate_strip(img):
+    """시험지의 방향, 끝(첫 칸 쪽) 위치, 가운데 줄, 폭을 정확히 찾아요. 못 찾으면 None.
+
+    가장자리 두 줄로 폭을 구하고, 칸 사이 경계선이 일정 간격으로 반복되는 패턴을
+    맞춰서 첫 칸 위치를 정해요.
+    """
+    info = find_strip_info(img)
+    if info is None:
+        return None
+    base = img.convert("L")
+    if not info["vertical"]:
+        base = base.transpose(Image.Transpose.TRANSPOSE)  # 길이 방향이 항상 위아래가 되게
+    length = base.height
+    w, cx = info["width"], info["cross"]
+    x0 = max(0, int(cx - w * 0.3))
+    x1 = min(base.width, max(x0 + 1, int(cx + w * 0.3)))
+    prof = list(base.crop((x0, 0, x1, length)).resize((1, length), Image.Resampling.BOX).getdata())
+    edge = [0] + [abs(prof[y + 1] - prof[y - 1]) for y in range(1, length - 1)] + [0]
+    mm = w / STRIP_MM["width"]
+    half = STRIP_MM["pad"] / 2 * mm
+
+    def at(y):
+        y = int(round(y))
+        if y < 2 or y >= length - 2:
+            return 0
+        return max(edge[y - 2:y + 3])
+
+    def score(t, ps):
+        total = 0
+        step = STRIP_MM["pitch"] * mm * ps
+        for i in range(10):
+            c = t + STRIP_MM["first"] * mm + i * step
+            total += at(c - half) + at(c + half)
+        c = t + STRIP_MM["first"] * mm - step  # 첫 칸 앞에 칸이 더 있으면 감점
+        return total - at(c - half) - at(c + half)
+
+    lo = max(int(info["start"] - 8 * w), int(-STRIP_MM["first"] * mm))
+    hi = int(info["start"] + 2 * w)
+    best = None
+    for ps in (0.88, 0.9, 0.92, 0.94, 0.96, 0.98, 1.0, 1.02, 1.04, 1.06, 1.08, 1.1, 1.12):
+        for t in range(lo, max(lo, hi) + 1):
+            sc = score(t, ps)
+            if best is None or sc > best[0]:
+                best = (sc, t, ps)
+    return {"vertical": info["vertical"], "tip": best[1], "cross": cx, "width": w,
+            "pitch_scale": best[2]}
+
+
 def analyze_strip(img, flip=False, items=None):
     """시험지 사진에서 10개 칸의 색을 읽고 항목별 결과를 반환.
 
-    사진이 가로든 세로든 상관없이, 시험지가 놓인 방향(긴 쪽)을 먼저 찾고
-    그 방향을 따라 칸이 일정 간격으로 놓여 있다고 가정해요.
+    사진이 가로든 세로든 상관없이, 시험지가 놓인 방향(긴 쪽)을 먼저 찾아요.
     세로로 놓였으면 위→아래, 가로로 놓였으면 왼쪽→오른쪽 순서예요.
+    시험지 폭을 기준으로 실제 크기 비율(STRIP_MM)대로 칸 위치를 계산해요.
     """
     w, h = img.size
     items = items or ITEMS
+    work = img.rotate(180) if flip else img  # 거꾸로 찍었으면 돌려서 같은 방식으로 계산
+    loc = locate_strip(work)
+    if loc is not None:
+        mm = loc["width"] / STRIP_MM["width"]
+        half = max(2, int(STRIP_MM["pad"] * 0.35 * mm))  # 칸 안쪽 70%만 읽어요
+        boxes = []
+        for i in range(len(items)):
+            pos = loc["tip"] + (STRIP_MM["first"] + i * STRIP_MM["pitch"] * loc["pitch_scale"]) * mm
+            c = loc["cross"]
+            b = ((c - half, pos - half, c + half, pos + half) if loc["vertical"]
+                 else (pos - half, c - half, pos + half, c + half))
+            x0, y0, x1, y1 = clamp_box(b, w, h)
+            boxes.append((w - x1, h - y1, w - x0, h - y0) if flip else (x0, y0, x1, y1))
+        return results_from_boxes(img, boxes, items), boxes
+
+    # 가장자리를 못 찾았을 때: 예전 방식(시험지 영역 전체 길이에 비례해서 배치)
     box = find_strip(img)
     if box is None:
         box = (0, 0, w, h)
@@ -533,14 +675,44 @@ def analyze_strip(img, flip=False, items=None):
 
 def clamp_box(b, w, h):
     """네모가 사진 밖으로 나가지 않게, 그리고 최소 2픽셀은 되게 맞춰요."""
-    x0, y0 = max(0, int(b[0])), max(0, int(b[1]))
+    x0 = min(max(0, int(b[0])), max(0, w - 2))
+    y0 = min(max(0, int(b[1])), max(0, h - 2))
     x1 = min(w, max(int(b[2]), x0 + 2))
     y1 = min(h, max(int(b[3]), y0 + 2))
     return (x0, y0, x1, y1)
 
 
+def strip_body_color(img):
+    """칸과 칸 사이의 시험지 몸통(흰 플라스틱) 색을 읽어요. 못 찾으면 None."""
+    loc = locate_strip(img)
+    if loc is None:
+        return None
+    mm = loc["width"] / STRIP_MM["width"]
+    w, h = img.size
+    cols = []
+    for i in range(9):
+        pos = loc["tip"] + (STRIP_MM["first"] + (i + 0.5) * STRIP_MM["pitch"] * loc["pitch_scale"]) * mm
+        c = loc["cross"]
+        if loc["vertical"]:
+            b = (c - mm * 1.2, pos - mm * 0.5, c + mm * 1.2, pos + mm * 0.5)
+        else:
+            b = (pos - mm * 0.5, c - mm * 1.2, pos + mm * 0.5, c + mm * 1.2)
+        if b[0] < 0 or b[1] < 0 or b[2] > w or b[3] > h:
+            continue
+        cols.append(img.crop(tuple(int(v) for v in b)).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0)))
+    if len(cols) < 3:
+        return None
+    return tuple(sorted(c[k] for c in cols)[len(cols) // 2] for k in range(3))
+
+
 def white_gains(img, target=245):
-    """사진에서 가장 밝은 부분(흰 시험지/종이)을 흰색으로 보고, 밝기·색 보정 배율(R,G,B)을 구해요."""
+    """밝기·색 보정 배율(R,G,B). 시험지 몸통(흰색)을 기준으로 하고, 못 찾으면 사진에서 가장 밝은 부분을 흰색으로 봐요."""
+    try:
+        body = strip_body_color(img)
+    except Exception:
+        body = None
+    if body is not None and min(body) > 60:
+        return tuple(min(2.0, max(0.8, 240 / max(c, 1))) for c in body)
     small = img.copy()
     small.thumbnail((300, 300))
     px = list(small.convert("RGB").getdata())
@@ -1070,13 +1242,7 @@ def main(page: ft.Page):
 
         def on_pan(e):
             dx, dy = get_delta(e)
-            bs = cur["boxes"]
-            # 묶음이 사진 밖으로 나가지 않게 이동량을 제한
-            dx = clamp(dx, -min(b[0] for b in bs), cur["dw"] - max(b[0] + b[2] for b in bs))
-            dy = clamp(dy, -min(b[1] for b in bs), cur["dh"] - max(b[1] + b[3] for b in bs))
-            cur["anchor"][0] += dx
-            cur["anchor"][1] += dy
-            apply_layout()
+            move_group(dx, dy)
 
         def make_gd(i, l, t, w, h):
             return ft.GestureDetector(
@@ -1086,7 +1252,8 @@ def main(page: ft.Page):
                     border=border_all(2, "#ff0000"),
                     content=ft.Text(str(i + 1), size=9, color="#ff0000"),
                 ),
-                on_pan_update=on_pan,
+                on_vertical_drag_update=on_pan,   # 화면 스크롤보다 먼저 잡히도록
+                on_horizontal_drag_update=on_pan,
                 drag_interval=15,
                 left=l,
                 top=t,
@@ -1112,7 +1279,8 @@ def main(page: ft.Page):
                 border=border_all(2, "#ffffff"),
                 content=ft.Icon(ft.Icons.OPEN_WITH, color="#ffffff", size=26),
             ),
-            on_pan_update=on_pan,
+            on_vertical_drag_update=on_pan,
+            on_horizontal_drag_update=on_pan,
             drag_interval=15,
             left=0,
             top=0,
@@ -1182,6 +1350,17 @@ def main(page: ft.Page):
         place_handle()
         stack_holder.controls[0].update()
 
+    def move_group(dx, dy):
+        """네모 묶음 전체를 (dx, dy)만큼 옮겨요. 사진 밖으로는 못 나가게 제한."""
+        bs = cur["boxes"]
+        if not bs:
+            return
+        dx = clamp(dx, -min(b[0] for b in bs), cur["dw"] - max(b[0] + b[2] for b in bs))
+        dy = clamp(dy, -min(b[1] for b in bs), cur["dh"] - max(b[1] + b[3] for b in bs))
+        cur["anchor"][0] += dx
+        cur["anchor"][1] += dy
+        apply_layout()
+
     def on_layout_change(e):
         apply_layout()
 
@@ -1210,11 +1389,13 @@ def main(page: ft.Page):
     auto_light.on_change = refresh_preview
     bright_slider.on_change = refresh_preview
 
-    def slider_row(sl, step):
+    def slider_row(sl, step, cb=None):
         """슬라이더 양옆에 -/+ 버튼을 붙여 한 칸씩 미세 조절."""
         def nudge(d):
             sl.value = clamp(round(sl.value + d * step), sl.min, sl.max)
-            if cur.get("item") is not None and stack_holder.controls:
+            if cb is not None:
+                cb()
+            elif cur.get("item") is not None and stack_holder.controls:
                 (refresh_preview if sl is bright_slider else lambda: apply_layout())()
             page.update()
         return ft.Row(
@@ -1343,8 +1524,18 @@ def main(page: ft.Page):
         legend,
         ft.Row(
             [
-                make_btn("elevated", "이 위치로 저장", icon=ft.Icons.CHECK, on_click=save_current),
-                make_btn("outlined", "자동 위치로 되돌리기", on_click=reset_boxes),
+                ft.Text("미세 이동", size=12),
+                ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=lambda e: move_group(-2, 0)),
+                ft.IconButton(icon=ft.Icons.ARROW_UPWARD, on_click=lambda e: move_group(0, -2)),
+                ft.IconButton(icon=ft.Icons.ARROW_DOWNWARD, on_click=lambda e: move_group(0, 2)),
+                ft.IconButton(icon=ft.Icons.ARROW_FORWARD, on_click=lambda e: move_group(2, 0)),
+            ],
+            spacing=0,
+        ),
+        ft.Row(
+            [
+                make_btn("elevated", "판독 시작", icon=ft.Icons.CHECK, on_click=save_current),
+                make_btn("outlined", "위치 조정", on_click=reset_boxes),
                 make_btn("text", "건너뛰기", on_click=skip_current),
             ],
             wrap=True,
@@ -1438,37 +1629,61 @@ def main(page: ft.Page):
     cam_w = int(min((page.width or 400) - 40, 380))
     cam_h = int(cam_w * 4 / 3)
     STRIP_TOP, STRIP_LEN = 0.06, 0.88  # 화면 높이 대비 시험지 위치/길이
-    n_pad = 10
-    mm = cam_h * STRIP_LEN / STRIP_MM["length"]   # 화면에서 1mm가 차지하는 픽셀
-    SIDE_PX = STRIP_MM["pad"] * mm                # 실제 칸 크기와 같은 한 변
-    STRIP_W_PX = STRIP_MM["width"] * mm           # 실제 시험지 폭
-    guide_y = [STRIP_TOP + (STRIP_MM["first"] + i * STRIP_MM["pitch"]) * mm / cam_h
-               for i in range(n_pad)]              # 각 칸 중심 (화면 높이 대비)
+    guide_size = ft.Slider(min=60, max=150, value=100, divisions=90, label="{value}%",
+                           expand=True)
+    guide_refs = {"outline": None, "boxes": []}
+
+    def guide_geom():
+        """틀 크기(%)를 반영한 화면 위 위치들. 시험지 끝(첫 칸 쪽)은 위쪽에 고정."""
+        mmp = cam_h * STRIP_LEN / STRIP_MM["length"] * guide_size.value / 100  # 1mm = 몇 픽셀
+        side = STRIP_MM["pad"] * mmp                       # 실제 칸 크기와 같은 한 변
+        strip_w = STRIP_MM["width"] * mmp                  # 실제 시험지 폭
+        top = cam_h * STRIP_TOP
+        ys = [top + (STRIP_MM["first"] + i * STRIP_MM["pitch"]) * mmp for i in range(10)]
+        return mmp, side, strip_w, top, ys
 
     def guide_boxes_for(img):
         """가이드의 네모 위치를 찍힌 사진 좌표로 바꿔요. 읽는 영역은 칸 안쪽 70%."""
         w, h = img.size
-        half = SIDE_PX * 0.7 / cam_w * w / 2
-        return [clamp_box((w / 2 - half, y * h - half, w / 2 + half, y * h + half), w, h)
-                for y in guide_y]
+        _, side, _, _, ys = guide_geom()
+        half = side * 0.7 / cam_w * w / 2
+        return [clamp_box((w / 2 - half, y / cam_h * h - half, w / 2 + half,
+                           y / cam_h * h + half), w, h) for y in ys]
 
     auto_read = ft.Switch(label="찍은 뒤 위치 확인 없이 바로 판독·저장", value=False)
 
+    def apply_guide(e=None):
+        if guide_refs["outline"] is None:
+            return
+        _, side, strip_w, top, ys = guide_geom()
+        o = guide_refs["outline"]
+        o.left, o.top, o.width = cam_w / 2 - strip_w / 2, top, strip_w
+        o.height = cam_h * STRIP_LEN * guide_size.value / 100
+        for c, y in zip(guide_refs["boxes"], ys):
+            c.left, c.top = cam_w / 2 - side / 2, y - side / 2
+            c.width = c.height = side
+        page.update()
+
+    guide_size.on_change = apply_guide
+
     def make_guide():
-        items_ = [
-            ft.Container(width=cam_w, height=cam_h, content=camera),
-            ft.Container(
-                left=cam_w / 2 - STRIP_W_PX / 2, top=cam_h * STRIP_TOP,
-                width=STRIP_W_PX, height=cam_h * STRIP_LEN,
-                border=border_all(1, "#ccffffff"), border_radius=3,
-            ),
-        ]
-        for i, y in enumerate(guide_y):
-            items_.append(ft.Container(
-                left=cam_w / 2 - SIDE_PX / 2, top=y * cam_h - SIDE_PX / 2,
-                width=SIDE_PX, height=SIDE_PX, border=border_all(1, "#ff0000"),
+        _, side, strip_w, top, ys = guide_geom()
+        outline = ft.Container(
+            left=cam_w / 2 - strip_w / 2, top=top,
+            width=strip_w, height=cam_h * STRIP_LEN * guide_size.value / 100,
+            border=border_all(1, "#ccffffff"), border_radius=3,
+        )
+        guide_refs["outline"] = outline
+        items_ = [ft.Container(width=cam_w, height=cam_h, content=camera), outline]
+        guide_refs["boxes"] = []
+        for i, y in enumerate(ys):
+            c = ft.Container(
+                left=cam_w / 2 - side / 2, top=y - side / 2,
+                width=side, height=side, border=border_all(1, "#ff0000"),
                 content=ft.Text(str(i + 1), size=8, color="#ff0000"),
-            ))
+            )
+            guide_refs["boxes"].append(c)
+            items_.append(c)
         return ft.Container(
             content=ft.Stack(items_, width=cam_w, height=cam_h),
             width=cam_w, height=cam_h, bgcolor="#000000", border_radius=8,
@@ -1479,6 +1694,8 @@ def main(page: ft.Page):
             ft.Text("흰 선 안에 시험지를 세로로 놓고, 첫 칸이 빨간 1번에 오게 맞춘 뒤 촬영하세요.",
                     size=12),
             make_guide(),
+            ft.Text("틀 크기 (흰 선 길이를 시험지 길이에 맞추세요)", size=12),
+            slider_row(guide_size, 1, apply_guide),
             auto_read,
             cam_status,
             ft.Row(
