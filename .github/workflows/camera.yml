@@ -61,7 +61,7 @@ jobs:
 
       - name: Build APK
         working-directory: camera_build
-        run: flet build apk --verbose
+        run: yes | flet build apk --verbose   # Flutter 설치 질문에 자동으로 y 대답
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
