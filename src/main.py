@@ -8,6 +8,55 @@ from datetime import datetime
 import flet as ft
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
+try:  # 카메라 확장은 새 Flet 빌드(카메라 버전)에서만 들어 있어요
+    import flet_camera as fc
+except Exception:
+    fc = None
+
+# Flet 1.x 이상이면 True (예전 0.28 에는 ElevatedButton 이 있어요)
+NEW_FLET = not hasattr(ft, "ElevatedButton")
+
+
+def border_all(width, color):
+    try:
+        return ft.Border.all(width, color)
+    except Exception:
+        return ft.border.all(width, color)
+
+
+def pad_sym(horizontal=0, vertical=0):
+    try:
+        return ft.Padding.symmetric(horizontal=horizontal, vertical=vertical)
+    except Exception:
+        return ft.padding.symmetric(horizontal=horizontal, vertical=vertical)
+
+
+def make_btn(kind, text, **kw):
+    """버튼 종류(elevated/outlined/text)를 Flet 버전에 맞게 만들어요."""
+    if NEW_FLET:
+        cls = ft.Button if kind == "elevated" else getattr(
+            ft, "OutlinedButton" if kind == "outlined" else "TextButton")
+        try:
+            return cls(content=text, **kw)
+        except TypeError:
+            return cls(text, **kw)
+    cls = getattr(ft, {"elevated": "ElevatedButton", "outlined": "OutlinedButton",
+                       "text": "TextButton"}[kind])
+    return cls(text, **kw)
+
+
+def make_image(png_bytes, w, h):
+    if NEW_FLET:
+        return ft.Image(src=png_bytes, width=w, height=h)
+    return ft.Image(src_base64=base64.b64encode(png_bytes).decode("ascii"), width=w, height=h)
+
+
+def set_image(ctrl, png_bytes):
+    if NEW_FLET:
+        ctrl.src = png_bytes
+    else:
+        ctrl.src_base64 = base64.b64encode(png_bytes).decode("ascii")
+
 # ─────────────────────────────────────────────
 # ① 키트 색상표 데이터 (보내주신 색상표 이미지에서 추출한 값)
 #    각 항목의 levels 첫 번째가 음성(기본) 색이에요.
@@ -510,7 +559,11 @@ DISPLAY_MAX = 380  # 위치 조정 화면에서 사진의 긴 쪽 길이(픽셀)
 
 
 def make_clean_b64(img, scale, gain=(1.0, 1.0, 1.0)):
-    """위치 조정 화면에 깔 사진(네모 없이)을 base64로 만들어요. 밝기 보정도 반영."""
+    return base64.b64encode(make_clean_png(img, scale, gain)).decode("ascii")
+
+
+def make_clean_png(img, scale, gain=(1.0, 1.0, 1.0)):
+    """위치 조정 화면에 깔 사진(네모 없이)을 PNG 바이트로 만들어요. 밝기 보정도 반영."""
     small = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))))
     if any(abs(g - 1.0) > 0.005 for g in gain):
         chans = [ch.point([min(255, int(round(v * g))) for v in range(256)])
@@ -518,7 +571,7 @@ def make_clean_b64(img, scale, gain=(1.0, 1.0, 1.0)):
         small = Image.merge("RGB", chans)
     buf = io.BytesIO()
     small.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return buf.getvalue()
 
 
 def get_delta(e):
@@ -551,7 +604,7 @@ def rgb_to_hex(rgb):
 def swatch(rgb):
     return ft.Container(
         width=22, height=22, bgcolor=rgb_to_hex(rgb), border_radius=4,
-        border=ft.border.all(1, "#cccccc"),
+        border=border_all(1, "#cccccc"),
     )
 
 
@@ -573,7 +626,7 @@ def judge_chip(judge, text=None):
         content=ft.Text(text or judge, color="white", size=13),
         bgcolor=JUDGE_COLORS.get(judge, "#546e7a"),
         border_radius=10,
-        padding=ft.padding.symmetric(horizontal=10, vertical=3),
+        padding=pad_sym(horizontal=10, vertical=3),
     )
 
 
@@ -595,7 +648,7 @@ def big_swatch(rgb, caption):
         [
             ft.Container(
                 width=70, height=50, bgcolor=rgb_to_hex(rgb), border_radius=8,
-                border=ft.border.all(1, "#999999"),
+                border=border_all(1, "#999999"),
             ),
             ft.Text(caption, size=11),
             ft.Text(f"RGB {rgb[0]}, {rgb[1]}, {rgb[2]}", size=10),
@@ -667,7 +720,7 @@ def item_detail(r, kit_id="A"):
                     [
                         ft.Container(
                             width=40, height=28, bgcolor=rgb_to_hex(ref), border_radius=5,
-                            border=ft.border.all(3 if mine else 1,
+                            border=border_all(3 if mine else 1,
                                                  "#1e88e5" if mine else "#aaaaaa"),
                         ),
                         ft.Text(label, size=9, width=52, text_align=ft.TextAlign.CENTER),
@@ -687,7 +740,7 @@ def item_detail(r, kit_id="A"):
                 ),
                 padding=6,
                 border_radius=6,
-                border=ft.border.all(2, color),
+                border=border_all(2, color),
             )
 
         groups = []
@@ -700,9 +753,9 @@ def item_detail(r, kit_id="A"):
 
     return ft.Container(
         content=ft.Column(lines, spacing=8),
-        padding=ft.padding.symmetric(horizontal=10, vertical=10),
+        padding=pad_sym(horizontal=10, vertical=10),
         border_radius=10,
-        border=ft.border.all(1, "#555555"),
+        border=border_all(1, "#555555"),
     )
 
 
@@ -715,7 +768,7 @@ def app_header():
     ]
     strip = ft.Container(
         content=ft.Row(pads, spacing=3, tight=True),
-        padding=ft.padding.symmetric(horizontal=8, vertical=6),
+        padding=pad_sym(horizontal=8, vertical=6),
         bgcolor="#f4f1ea",
         border_radius=8,
     )
@@ -743,7 +796,7 @@ def chart_view(kit_id):
         return ft.Column(
             [
                 ft.Container(width=40, height=28, bgcolor=rgb_to_hex(ref), border_radius=5,
-                             border=ft.border.all(1, "#aaaaaa")),
+                             border=border_all(1, "#aaaaaa")),
                 ft.Text(label, size=9, width=52, text_align=ft.TextAlign.CENTER),
             ],
             spacing=2,
@@ -759,7 +812,7 @@ def chart_view(kit_id):
             ),
             padding=6,
             border_radius=6,
-            border=ft.border.all(2, color),
+            border=border_all(2, color),
         )
 
     for item in kit["items"]:
@@ -779,7 +832,7 @@ def chart_view(kit_id):
         content=ft.Column(rows, spacing=8),
         padding=10,
         border_radius=10,
-        border=ft.border.all(1, "#555555"),
+        border=border_all(1, "#555555"),
     )
 
 
@@ -840,7 +893,7 @@ def result_rows(results, kit_id="A"):
             on_click=toggle,
             ink=True,
             border_radius=8,
-            padding=ft.padding.symmetric(vertical=4, horizontal=2),
+            padding=pad_sym(vertical=4, horizontal=2),
         )
         rows.append(ft.Column([header, detail], spacing=4))
     return rows
@@ -893,6 +946,9 @@ def main(page: ft.Page):
             on = kid == sel["kit"]
             b.bgcolor = "#1e88e5" if on else "#37474f"
             b.color = "#ffffff"
+            if NEW_FLET:  # 새 Flet에선 색이 안 먹을 수 있어 글자로도 표시
+                nm = KIT_BY_ID[kid]["name"]
+                b.content = ("✓ " + nm) if on else nm
 
     def select_kit(kit_id):
         sel["kit"] = kit_id
@@ -911,7 +967,8 @@ def main(page: ft.Page):
         page.update()
 
     for _k in KITS:
-        kit_buttons[_k["id"]] = ft.ElevatedButton(
+        kit_buttons[_k["id"]] = make_btn(
+            "elevated",
             _k["name"],
             expand=True,
             on_click=lambda e, kid=_k["id"]: select_kit(kid),
@@ -937,7 +994,8 @@ def main(page: ft.Page):
             [
                 ft.Text("색 칸: 왼쪽 측정 색, 오른쪽 기준 색", size=11),
                 *result_rows(r["results"], r.get("kit", "A")),
-                ft.TextButton(
+                make_btn(
+                    "text",
                     "이 기록 삭제",
                     icon=ft.Icons.DELETE,
                     on_click=lambda e, idx=i: delete_record(idx),
@@ -973,7 +1031,7 @@ def main(page: ft.Page):
             ),
             on_click=toggle,
             ink=True,
-            padding=ft.padding.symmetric(vertical=12, horizontal=8),
+            padding=pad_sym(vertical=12, horizontal=8),
             border_radius=8,
         )
         return ft.Column([header, details, ft.Divider(height=1)], spacing=0)
@@ -1017,7 +1075,7 @@ def main(page: ft.Page):
                 content=ft.Container(
                     width=w,
                     height=h,
-                    border=ft.border.all(2, "#ff0000"),
+                    border=border_all(2, "#ff0000"),
                     content=ft.Text(str(i + 1), size=9, color="#ff0000"),
                 ),
                 on_pan_update=on_pan,
@@ -1043,7 +1101,7 @@ def main(page: ft.Page):
         handle = ft.GestureDetector(
             content=ft.Container(
                 width=HANDLE, height=HANDLE, bgcolor="#1e88e5", border_radius=HANDLE / 2,
-                border=ft.border.all(2, "#ffffff"),
+                border=border_all(2, "#ffffff"),
                 content=ft.Icon(ft.Icons.OPEN_WITH, color="#ffffff", size=26),
             ),
             on_pan_update=on_pan,
@@ -1055,7 +1113,7 @@ def main(page: ft.Page):
         place_handle()
 
         stack = ft.Stack(
-            [ft.Image(src_base64=make_clean_b64(img, scale, gain_for(item)), width=dw, height=dh),
+            [make_image(make_clean_png(img, scale, gain_for(item)), dw, dh),
              *cur["gds"], handle],
             width=dw,
             height=dh,
@@ -1134,8 +1192,8 @@ def main(page: ft.Page):
         item = cur.get("item")
         if item is None or not stack_holder.controls:
             return
-        stack_holder.controls[0].controls[0].src_base64 = make_clean_b64(
-            item["img"], cur["scale"], gain_for(item))
+        set_image(stack_holder.controls[0].controls[0],
+                  make_clean_png(item["img"], cur["scale"], gain_for(item)))
         stack_holder.controls[0].update()
 
     size_slider.on_change = on_layout_change
@@ -1153,9 +1211,9 @@ def main(page: ft.Page):
             page.update()
         return ft.Row(
             [
-                ft.IconButton(ft.Icons.REMOVE, on_click=lambda e: nudge(-1)),
+                ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda e: nudge(-1)),
                 sl,
-                ft.IconButton(ft.Icons.ADD, on_click=lambda e: nudge(1)),
+                ft.IconButton(icon=ft.Icons.ADD, on_click=lambda e: nudge(1)),
             ],
             spacing=0,
         )
@@ -1204,22 +1262,33 @@ def main(page: ft.Page):
         )[1]
         build_editor(item)
 
-    def on_picked(e: ft.FilePickerResultEvent):
-        if not e.files:
-            return
+    def handle_paths(paths):
+        """고른 사진 파일들을 읽어서 위치 조정 대기열에 넣어요."""
         failed = 0
-        added = []
-        for f in e.files:
+        pairs = []
+        for p in paths:
             try:
-                img = load_image(f.path)
-                _, boxes = analyze_strip(img, flip.value, kit_items(sel["kit"]))
+                img = load_image(p)
             except Exception:
                 failed += 1
                 continue
-            taken = get_photo_datetime(f.path).strftime("%Y-%m-%d %H:%M")
-            added.append({"img": img, "boxes": boxes, "taken": taken, "kit": sel["kit"]})
+            pairs.append((img, get_photo_datetime(p).strftime("%Y-%m-%d %H:%M")))
         if failed:
             result_title.value = f"{failed}장은 읽지 못했어요."
+        add_images(pairs)
+
+    def on_picked(e):
+        if e.files:
+            handle_paths([f.path for f in e.files])
+
+    def add_images(pairs):
+        added = []
+        for img, taken in pairs:
+            try:
+                _, boxes = analyze_strip(img, flip.value, kit_items(sel["kit"]))
+            except Exception:
+                continue
+            added.append({"img": img, "boxes": boxes, "taken": taken, "kit": sel["kit"]})
         if not added:
             page.update()
             return
@@ -1257,17 +1326,100 @@ def main(page: ft.Page):
         legend,
         ft.Row(
             [
-                ft.ElevatedButton("이 위치로 저장", icon=ft.Icons.CHECK, on_click=save_current),
-                ft.OutlinedButton("자동 위치로 되돌리기", on_click=reset_boxes),
-                ft.TextButton("건너뛰기", on_click=skip_current),
+                make_btn("elevated", "이 위치로 저장", icon=ft.Icons.CHECK, on_click=save_current),
+                make_btn("outlined", "자동 위치로 되돌리기", on_click=reset_boxes),
+                make_btn("text", "건너뛰기", on_click=skip_current),
             ],
             wrap=True,
         ),
         ft.Divider(),
     ]
 
-    picker = ft.FilePicker(on_result=on_picked)
-    page.overlay.append(picker)
+    if NEW_FLET:
+        picker = ft.FilePicker()
+        page.services.append(picker)
+    else:
+        picker = ft.FilePicker(on_result=on_picked)
+        page.overlay.append(picker)
+
+    async def pick_new(e):
+        files = await picker.pick_files(file_type=ft.FilePickerFileType.IMAGE,
+                                        allow_multiple=True)
+        if files:
+            handle_paths([f.path for f in files])
+
+    def pick_old(e):
+        picker.pick_files(file_type=ft.FilePickerFileType.IMAGE, allow_multiple=True)
+
+    # ── 앱 안 카메라 (카메라 버전 빌드에서만 보여요) ─────────────
+    camera = fc.Camera(expand=True, preview_enabled=True) if (fc and NEW_FLET) else None
+    cam = {"ready": False, "cams": [], "idx": 0}
+    cam_status = ft.Text("", size=12)
+    cam_box = ft.Column(visible=False, spacing=8)
+
+    async def start_cam():
+        await camera.initialize(
+            description=cam["cams"][cam["idx"]],
+            resolution_preset=getattr(fc.ResolutionPreset, "HIGH", fc.ResolutionPreset.MEDIUM),
+            enable_audio=False,
+            image_format_group=fc.ImageFormatGroup.JPEG,
+        )
+        cam["ready"] = True
+        cam_status.value = "준비 완료: 시험지가 화면에 크게 들어오게 하고 촬영 버튼을 누르세요."
+
+    async def open_camera(e):
+        cam_box.visible = True
+        cam_status.value = "카메라 준비 중..."
+        page.update()
+        try:
+            if not cam["ready"]:
+                cam["cams"] = await camera.get_available_cameras()
+                if not cam["cams"]:
+                    cam_status.value = "카메라를 찾지 못했어요."
+                else:
+                    await start_cam()
+        except Exception as ex:
+            cam_status.value = f"카메라 오류: {ex}"
+        page.update()
+
+    async def switch_cam(e):
+        if not cam["cams"]:
+            return
+        cam["idx"] = (cam["idx"] + 1) % len(cam["cams"])
+        try:
+            await start_cam()
+        except Exception as ex:
+            cam_status.value = f"카메라 오류: {ex}"
+        page.update()
+
+    async def snap_cam(e):
+        try:
+            data = await camera.take_picture()
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        except Exception as ex:
+            cam_status.value = f"촬영 오류: {ex}"
+            page.update()
+            return
+        cam_box.visible = False
+        add_images([(img, datetime.now().strftime("%Y-%m-%d %H:%M"))])
+
+    async def close_cam(e):
+        cam_box.visible = False
+        page.update()
+
+    if camera is not None:
+        cam_box.controls = [
+            ft.Container(height=420, bgcolor="#000000", border_radius=8, content=camera),
+            cam_status,
+            ft.Row(
+                [
+                    make_btn("elevated", "촬영", icon=ft.Icons.PHOTO_CAMERA, on_click=snap_cam),
+                    make_btn("outlined", "카메라 전환", on_click=switch_cam),
+                    make_btn("text", "닫기", on_click=close_cam),
+                ],
+                wrap=True,
+            ),
+        ]
 
     page.add(
         app_header(),
@@ -1285,15 +1437,11 @@ def main(page: ft.Page):
             color="#ffb300",
         ),
         flip,
-        ft.ElevatedButton(
-            "기존 사진 불러오기",
-            icon=ft.Icons.PHOTO_LIBRARY,
-            on_click=lambda e: picker.pick_files(
-                file_type=ft.FilePickerFileType.IMAGE,
-                allow_multiple=True,
-            ),
-        ),
-        ft.OutlinedButton("판독지 보기 / 닫기", icon=ft.Icons.PALETTE, on_click=toggle_chart),
+        make_btn("elevated", "기존 사진 불러오기", icon=ft.Icons.PHOTO_LIBRARY,
+                 on_click=pick_new if NEW_FLET else pick_old),
+        *([make_btn("elevated", "카메라로 바로 찍기", icon=ft.Icons.PHOTO_CAMERA,
+                    on_click=open_camera), cam_box] if camera is not None else []),
+        make_btn("outlined", "판독지 보기 / 닫기", icon=ft.Icons.PALETTE, on_click=toggle_chart),
         chart_holder,
         editor_box,
         result_title,
@@ -1305,4 +1453,7 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    if NEW_FLET:
+        ft.run(main)
+    else:
+        ft.app(target=main)
