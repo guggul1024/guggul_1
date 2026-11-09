@@ -1,7 +1,7 @@
 [project]
 name = "kit-app"
 version = "1.0.0"
-description = "키트 기록"
+description = "SB-kit 소변 시험지 판독 기록"
 dependencies = [
   "flet==0.28.3",
   "pillow",
@@ -9,7 +9,7 @@ dependencies = [
 
 [tool.flet]
 org = "com.example"
-product = "키트 기록"
+product = "SB-kit"
 company = "personal"
 copyright = "personal use"
 build_number = 1
